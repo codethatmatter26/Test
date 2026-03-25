@@ -3,124 +3,519 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pong Game</title>
+    <title>Gorilla Game</title>
     <style>
-        body { display: flex; justify-content: center; align-items: center; height: 100vh; background: black; }
-        canvas { border: 1px solid white; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            color: #fff;
+        }
+        #gameCanvas {
+            border: 2px solid #444;
+            display: block;
+        }
+        #ui {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+            padding: 12px 20px;
+            background: #111;
+            border: 2px solid #444;
+            border-top: none;
+            width: 800px;
+        }
+        .player-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+        }
+        .player-panel h3 { font-size: 13px; color: #ffdd44; }
+        .input-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+        .input-row label { width: 65px; color: #aaa; }
+        .input-row input[type=range] { flex: 1; accent-color: #ffdd44; }
+        .input-row span { width: 35px; text-align: right; color: #fff; font-size: 12px; }
+        #center-panel {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+        #throwBtn {
+            padding: 10px 24px;
+            font-size: 15px;
+            font-family: 'Courier New', monospace;
+            background: #ffdd44;
+            color: #000;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        #throwBtn:hover { background: #ffe866; }
+        #throwBtn:disabled { background: #555; color: #888; cursor: default; }
+        #status {
+            font-size: 12px;
+            color: #88ff88;
+            text-align: center;
+            min-height: 16px;
+        }
+        #wind-display { font-size: 12px; color: #88aaff; text-align: center; }
     </style>
 </head>
 <body>
-    <canvas id="pong" width="800" height="400"></canvas>
-    <script>
-        const canvas = document.getElementById('pong');
-        const ctx = canvas.getContext('2d');
+<canvas id="gameCanvas" width="800" height="450"></canvas>
+<div id="ui">
+    <div class="player-panel" id="panel1">
+        <h3>&#x1F98D; PLAYER 1</h3>
+        <div class="input-row">
+            <label>Angle:</label>
+            <input type="range" id="angle1" min="1" max="89" value="45">
+            <span id="angle1Val">45</span>&deg;
+        </div>
+        <div class="input-row">
+            <label>Power:</label>
+            <input type="range" id="power1" min="10" max="100" value="50">
+            <span id="power1Val">50</span>
+        </div>
+        <div style="font-size:12px; color:#ffdd44;">Score: <span id="score1">0</span></div>
+    </div>
+    <div id="center-panel">
+        <div id="wind-display">Wind: 0</div>
+        <button id="throwBtn">THROW!</button>
+        <div id="status">Player 1's turn</div>
+    </div>
+    <div class="player-panel" id="panel2">
+        <h3>&#x1F98D; PLAYER 2</h3>
+        <div class="input-row">
+            <label>Angle:</label>
+            <input type="range" id="angle2" min="91" max="179" value="135">
+            <span id="angle2Val">135</span>&deg;
+        </div>
+        <div class="input-row">
+            <label>Power:</label>
+            <input type="range" id="power2" min="10" max="100" value="50">
+            <span id="power2Val">50</span>
+        </div>
+        <div style="font-size:12px; color:#ff8844;">Score: <span id="score2">0</span></div>
+    </div>
+</div>
 
-        // Paddle dimensions
-        const paddleWidth = 10, paddleHeight = 100;
-        const ballSize = 10;
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
 
-        // Paddles and ball
-        const playerPaddle = { x: 0, y: canvas.height / 2 - paddleHeight / 2, width: paddleWidth, height: paddleHeight, speed: 2 }; 
-        const aiPaddle = { x: canvas.width - paddleWidth, y: canvas.height / 2 - paddleHeight / 2, width: paddleWidth, height: paddleHeight, speed: 2 };
-        const ball = { x: canvas.width / 2, y: canvas.height / 2, radius: ballSize, speedX: 4, speedY: 4 };
+// --- Game state ---
+let buildings = [];
+let gorillas = [{x:0,y:0},{x:0,y:0}];
+let banana = null;
+let explosion = null;
+let currentPlayer = 0;
+let scores = [0, 0];
+let wind = 0;
+let gameOver = false;
+let animating = false;
 
-        let playerScore = 0, aiScore = 0;
+const GRAVITY = 0.25;
+const GORILLA_W = 40, GORILLA_H = 40;
+const BANANA_RADIUS = 5;
+const EXPLODE_RADIUS = 35;
 
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            // Draw paddles
-            ctx.fillStyle = 'white';
-            ctx.fillRect(playerPaddle.x, playerPaddle.y, playerPaddle.width, playerPaddle.height);
-            ctx.fillRect(aiPaddle.x, aiPaddle.y, aiPaddle.width, aiPaddle.height);
+// --- UI elements ---
+const angleInputs = [document.getElementById('angle1'), document.getElementById('angle2')];
+const powerInputs = [document.getElementById('power1'), document.getElementById('power2')];
+const angleVals   = [document.getElementById('angle1Val'), document.getElementById('angle2Val')];
+const powerVals   = [document.getElementById('power1Val'), document.getElementById('power2Val')];
+const throwBtn    = document.getElementById('throwBtn');
+const statusEl    = document.getElementById('status');
+const windEl      = document.getElementById('wind-display');
+const score1El    = document.getElementById('score1');
+const score2El    = document.getElementById('score2');
 
-            // Draw ball
-            ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-            ctx.fill();
+angleInputs.forEach((inp, i) => inp.addEventListener('input', () => angleVals[i].textContent = inp.value));
+powerInputs.forEach((inp, i) => inp.addEventListener('input', () => powerVals[i].textContent = inp.value));
 
-            // Draw scoreboard
-            ctx.font = '20px Arial';
-            ctx.fillText(`${playerScore}`, canvas.width / 4, 20);
-            ctx.fillText(`${aiScore}`, (canvas.width * 3) / 4, 20);
-        }
+// --- City generation ---
+function generateCity() {
+    buildings = [];
+    const numBuildings = 8;
+    const bw = W / numBuildings;
 
-        function update() {
-            // Move the ball
-            ball.x += ball.speedX;
-            ball.y += ball.speedY;
-
-            // Ball collision with top and bottom
-            if (ball.y + ball.radius > canvas.height || ball.y - ball.radius < 0) {
-                ball.speedY *= -1;
-            }
-
-            // Ball collision with paddles
-            if (
-                ball.x - ball.radius < playerPaddle.x + playerPaddle.width &&
-                ball.y > playerPaddle.y &&
-                ball.y < playerPaddle.y + playerPaddle.height
-            ) {
-                ball.speedX *= -1;
-            }
-            if (
-                ball.x + ball.radius > aiPaddle.x &&
-                ball.y > aiPaddle.y &&
-                ball.y < aiPaddle.y + aiPaddle.height
-            ) {
-                ball.speedX *= -1;
-            }
-
-            // Score update
-            if (ball.x - ball.radius < 0) {
-                aiScore++;
-                resetBall();
-            }
-            if (ball.x + ball.radius > canvas.width) {
-                playerScore++;
-                resetBall();
-            }
-
-            // AI paddle movement
-            if (aiPaddle.y + paddleHeight / 2 < ball.y) {
-                aiPaddle.y += aiPaddle.speed;
-            } else {
-                aiPaddle.y -= aiPaddle.speed;
-            }
-        }
-
-        function resetBall() {
-            ball.x = canvas.width / 2;
-            ball.y = canvas.height / 2;
-            ball.speedX *= -1;
-        }
-
-        function gameLoop() {
-            draw();
-            update();
-            requestAnimationFrame(gameLoop);
-        }
-
-        document.addEventListener('mousemove', (event) => {
-            const rect = canvas.getBoundingClientRect();
-            const mouseY = event.clientY - rect.top;
-            playerPaddle.y = mouseY - playerPaddle.height / 2;
-            // Keep the paddle within bounds
-            if (playerPaddle.y < 0) playerPaddle.y = 0;
-            if (playerPaddle.y + playerPaddle.height > canvas.height) playerPaddle.y = canvas.height - playerPaddle.height;
+    for (let i = 0; i < numBuildings; i++) {
+        const h = 80 + Math.random() * 170;
+        const hue = Math.floor(Math.random() * 360);
+        buildings.push({
+            x: i * bw,
+            y: H - h,
+            w: bw - 2,
+            h: h,
+            color: `hsl(${hue},30%,35%)`,
+            windows: generateWindows(i * bw, H - h, bw - 2, h)
         });
+    }
+}
 
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'ArrowUp') {
-                playerPaddle.y -= playerPaddle.speed;
-                if (playerPaddle.y < 0) playerPaddle.y = 0;
-            }
-            if (event.key === 'ArrowDown') {
-                playerPaddle.y += playerPaddle.speed;
-                if (playerPaddle.y + playerPaddle.height > canvas.height) playerPaddle.y = canvas.height - playerPaddle.height;
-            }
-        });
+function generateWindows(bx, by, bw, bh) {
+    const wins = [];
+    const cols = Math.floor(bw / 18);
+    const rows = Math.floor(bh / 22);
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            wins.push({
+                x: bx + 5 + c * 18,
+                y: by + 10 + r * 22,
+                lit: Math.random() > 0.35
+            });
+        }
+    }
+    return wins;
+}
 
-        gameLoop();
-    </script>
+function placeGorillas() {
+    // Player 1 on building 1, player 2 on building 6
+    const b1 = buildings[1];
+    const b2 = buildings[6];
+    gorillas[0] = { x: b1.x + b1.w / 2, y: b1.y - GORILLA_H, alive: true };
+    gorillas[1] = { x: b2.x + b2.w / 2, y: b2.y - GORILLA_H, alive: true };
+}
+
+function newRound() {
+    generateCity();
+    placeGorillas();
+    wind = (Math.random() - 0.5) * 4;
+    banana = null;
+    explosion = null;
+    animating = false;
+    gameOver = false;
+    updateWindDisplay();
+    updateUI();
+}
+
+// --- Drawing ---
+function drawSky() {
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#000020');
+    grad.addColorStop(1, '#000840');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Stars
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    for (let i = 0; i < 80; i++) {
+        // Deterministic stars based on index
+        const sx = (i * 137 + 50) % W;
+        const sy = (i * 97 + 20) % (H * 0.6);
+        ctx.fillRect(sx, sy, 1, 1);
+    }
+}
+
+function drawBuildings() {
+    for (const b of buildings) {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        // Windows
+        for (const w of b.windows) {
+            ctx.fillStyle = w.lit ? '#ffffa0' : '#223';
+            ctx.fillRect(w.x, w.y, 10, 14);
+        }
+        // Roof edge
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(b.x, b.y, b.w, 3);
+    }
+}
+
+function drawGorilla(gx, gy, alive, playerIdx) {
+    if (!alive) return;
+    const color = playerIdx === 0 ? '#8B4513' : '#8B4513';
+    ctx.save();
+    ctx.translate(gx, gy);
+
+    // Body
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(0, 20, 14, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head
+    ctx.fillStyle = '#A0522D';
+    ctx.beginPath();
+    ctx.arc(0, 4, 11, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Face
+    ctx.fillStyle = '#D2691E';
+    ctx.beginPath();
+    ctx.ellipse(0, 7, 7, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(-4, 3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(4, 3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(-4, 3, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(4, 3, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // Nostrils
+    ctx.fillStyle = '#5a2800';
+    ctx.beginPath(); ctx.arc(-2, 8, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(2, 8, 1.2, 0, Math.PI * 2); ctx.fill();
+
+    // Arms
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    // Left arm up (throwing pose for current player)
+    const armAngle = playerIdx === currentPlayer ? -Math.PI / 3 : -Math.PI / 6;
+    ctx.beginPath();
+    ctx.moveTo(-13, 18);
+    ctx.lineTo(-13 + Math.cos(armAngle) * 16, 18 + Math.sin(armAngle) * 16);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(13, 18);
+    ctx.lineTo(13 + Math.cos(Math.PI - armAngle) * 16, 18 + Math.sin(Math.PI - armAngle) * 16);
+    ctx.stroke();
+
+    // Player label
+    ctx.fillStyle = playerIdx === 0 ? '#ffdd44' : '#ff8844';
+    ctx.font = 'bold 10px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('P' + (playerIdx + 1), 0, -4);
+
+    ctx.restore();
+}
+
+function drawBanana() {
+    if (!banana) return;
+    ctx.save();
+    ctx.translate(banana.x, banana.y);
+    ctx.rotate(banana.angle);
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(0, 0, BANANA_RADIUS, 0.3, Math.PI - 0.3);
+    ctx.arc(0, BANANA_RADIUS * 1.5, BANANA_RADIUS * 1.2, Math.PI + 0.3, -0.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#B8860B';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+}
+
+function drawExplosion() {
+    if (!explosion) return;
+    const p = explosion.progress; // 0..1
+    const r = EXPLODE_RADIUS * Math.sin(p * Math.PI);
+
+    // Outer ring
+    ctx.save();
+    ctx.globalAlpha = 1 - p;
+    const grad = ctx.createRadialGradient(explosion.x, explosion.y, 0, explosion.x, explosion.y, r);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.3, '#ffee00');
+    grad.addColorStop(0.7, '#ff4400');
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(explosion.x, explosion.y, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sparks
+    for (let i = 0; i < 12; i++) {
+        const ang = (i / 12) * Math.PI * 2;
+        const len = r * (0.5 + 0.5 * Math.sin(p * Math.PI * 3 + i));
+        ctx.strokeStyle = i % 2 === 0 ? '#ffee00' : '#ff6600';
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = (1 - p) * 0.8;
+        ctx.beginPath();
+        ctx.moveTo(explosion.x + Math.cos(ang) * r * 0.3, explosion.y + Math.sin(ang) * r * 0.3);
+        ctx.lineTo(explosion.x + Math.cos(ang) * len, explosion.y + Math.sin(ang) * len);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function drawHUD() {
+    // Wind arrow
+    const wx = W / 2;
+    const wy = 18;
+    const arrowLen = Math.abs(wind) * 12;
+    ctx.fillStyle = '#88aaff';
+    ctx.font = '11px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(`WIND: ${wind > 0 ? '>' : '<'} ${Math.abs(wind).toFixed(1)}`, wx, wy);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    drawBuildings();
+    gorillas.forEach((g, i) => drawGorilla(g.x, g.y, g.alive, i));
+    drawBanana();
+    drawExplosion();
+    drawHUD();
+}
+
+// --- Physics ---
+function throwBanana() {
+    if (animating || gameOver) return;
+
+    const angle = parseFloat(angleInputs[currentPlayer].value);
+    const power = parseFloat(powerInputs[currentPlayer].value);
+    const rad = angle * Math.PI / 180;
+    const speed = power * 0.22;
+
+    const g = gorillas[currentPlayer];
+    banana = {
+        x: g.x,
+        y: g.y + GORILLA_H / 2,
+        vx: Math.cos(rad) * speed,
+        vy: -Math.sin(rad) * speed,
+        angle: 0
+    };
+
+    animating = true;
+    throwBtn.disabled = true;
+    statusEl.textContent = 'Flying...';
+    requestAnimationFrame(gameLoop);
+}
+
+function updateBanana() {
+    if (!banana) return false;
+
+    banana.vy += GRAVITY;
+    banana.vx += wind * 0.008;
+    banana.x += banana.vx;
+    banana.y += banana.vy;
+    banana.angle += 0.25;
+
+    // Off screen
+    if (banana.x < -20 || banana.x > W + 20 || banana.y > H + 20) {
+        banana = null;
+        return true; // missed
+    }
+
+    // Check gorilla hit
+    for (let i = 0; i < 2; i++) {
+        if (i === currentPlayer) continue;
+        const g = gorillas[i];
+        if (!g.alive) continue;
+        const dx = banana.x - g.x;
+        const dy = banana.y - (g.y + GORILLA_H / 2);
+        if (Math.sqrt(dx * dx + dy * dy) < GORILLA_W / 2 + BANANA_RADIUS) {
+            triggerExplosion(banana.x, banana.y, i, true);
+            banana = null;
+            return false;
+        }
+    }
+
+    // Check building collision
+    for (const b of buildings) {
+        if (banana.x >= b.x && banana.x <= b.x + b.w && banana.y >= b.y) {
+            triggerExplosion(banana.x, banana.y, -1, false);
+            banana = null;
+            return false;
+        }
+    }
+
+    return false;
+}
+
+function triggerExplosion(x, y, hitPlayer, isGorilla) {
+    explosion = { x, y, progress: 0, hitPlayer, isGorilla };
+
+    // Destroy windows in radius
+    for (const b of buildings) {
+        for (const w of b.windows) {
+            const dx = w.x + 5 - x, dy = w.y + 7 - y;
+            if (Math.sqrt(dx * dx + dy * dy) < EXPLODE_RADIUS) {
+                w.lit = false;
+            }
+        }
+    }
+}
+
+function animateExplosion() {
+    if (!explosion) return false;
+    explosion.progress += 0.04;
+    if (explosion.progress >= 1) {
+        if (explosion.isGorilla) {
+            gorillas[explosion.hitPlayer].alive = false;
+            scores[currentPlayer]++;
+            score1El.textContent = scores[0];
+            score2El.textContent = scores[1];
+            gameOver = true;
+        }
+        explosion = null;
+        return true;
+    }
+    return false;
+}
+
+// --- Main loop ---
+let lastTime = 0;
+let skipFrames = 0;
+function gameLoop(timestamp) {
+    // Run physics at ~60fps
+    skipFrames++;
+    const done = updateBanana();
+    const explodeDone = animateExplosion();
+
+    draw();
+
+    if (banana || explosion) {
+        requestAnimationFrame(gameLoop);
+        return;
+    }
+
+    // Both banana and explosion resolved
+    animating = false;
+    throwBtn.disabled = false;
+
+    if (gameOver) {
+        statusEl.textContent = `🎉 Player ${currentPlayer + 1} wins! Press THROW to play again.`;
+        throwBtn.textContent = 'NEW GAME';
+        throwBtn.onclick = startNewGame;
+    } else {
+        currentPlayer = 1 - currentPlayer;
+        updateUI();
+    }
+}
+
+function updateUI() {
+    const names = ['Player 1', 'Player 2'];
+    statusEl.textContent = `${names[currentPlayer]}'s turn — set angle & power`;
+    document.getElementById('panel1').style.opacity = currentPlayer === 0 ? '1' : '0.4';
+    document.getElementById('panel2').style.opacity = currentPlayer === 1 ? '1' : '0.4';
+}
+
+function updateWindDisplay() {
+    const dir = wind > 0 ? '>>>' : '<<<';
+    windEl.textContent = `Wind: ${dir.slice(0, Math.ceil(Math.abs(wind)))} ${wind.toFixed(1)}`;
+}
+
+function startNewGame() {
+    scores = [0, 0];
+    score1El.textContent = '0';
+    score2El.textContent = '0';
+    currentPlayer = 0;
+    throwBtn.textContent = 'THROW!';
+    throwBtn.onclick = throwBanana;
+    newRound();
+    draw();
+}
+
+// --- Init ---
+throwBtn.onclick = throwBanana;
+newRound();
+draw();
+</script>
 </body>
 </html>
